@@ -3,11 +3,11 @@ package main
 import (
 	"encoding/json"
 	"log"
-	"math/rand"
 	"net/http"
-	"time"
+	"strconv"
 
 	"github.com/go-chi/chi"
+	"github.com/go-redis/redis/v7"
 	broker "github.com/htaidirt/rabbit-go"
 	"github.com/streadway/amqp"
 )
@@ -38,10 +38,20 @@ func main() {
 	queue, err := amqpChannel.QueueDeclare("add", true, false, false, false, nil)
 	onFatalError(err, "Can't create `add` queue")
 
-	rand.Seed(time.Now().UnixNano())
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		addTask := broker.AddTask{Number1: rand.Intn(999), Number2: rand.Intn(999)}
-		body, err := json.Marshal(addTask)
+	// Create Redis Client to query database
+	client := redis.NewClient(&redis.Options{
+		Addr:     "database:6379",
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+
+	r.Get("/set/{name}/{age}", func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+		age, err := strconv.Atoi(chi.URLParam(r, "age"))
+		onFatalError(err, "Cannot convert age to integer")
+
+		person := broker.PersonMsg{Name: name, Age: age}
+		body, err := json.Marshal(person)
 		onFatalError(err, "Error encoding JSON")
 
 		err = amqpChannel.Publish("", queue.Name, false, false, amqp.Publishing{
@@ -51,8 +61,23 @@ func main() {
 		})
 		onFatalError(err, "Error publishing message")
 
-		log.Printf("Published AddTask: %d + %d", addTask.Number1, addTask.Number2)
+		log.Printf("Published PersonMsg: %s & %d", person.Name, person.Age)
 		w.Write([]byte("done"))
 	})
+
+	r.Get("/get/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+		log.Printf("URL parameter name=%s", name)
+
+		val, err := client.Get(name).Result()
+		if err != nil {
+			log.Printf("Error getting data from database: %s", err)
+			w.Write([]byte("KO"))
+		} else {
+			log.Printf("Got from database %s: %s", name, val)
+			w.Write([]byte(val))
+		}
+	})
+
 	http.ListenAndServe(":3000", r)
 }

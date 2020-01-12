@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/go-redis/redis/v7"
 	broker "github.com/htaidirt/rabbit-go"
 	"github.com/streadway/amqp"
 )
@@ -58,16 +59,24 @@ func main() {
 		for d := range messageChannel {
 			log.Printf("Consumer received a message: %s", d.Body)
 
-			addTask := &broker.AddTask{}
-			err := json.Unmarshal(d.Body, addTask)
+			person := &broker.PersonMsg{}
+			err := json.Unmarshal(d.Body, person)
 
 			if err != nil {
 				log.Printf("Error unmarshelling sent JSON: %s", err)
 			}
 
-			result := addTask.Number1 + addTask.Number2
-			log.Println("Processing Calculation...")
-			log.Printf("%d + %d = %d", addTask.Number1, addTask.Number2, result)
+			log.Println("Received message:")
+			log.Printf("%s is %d years old!", person.Name, person.Age)
+
+			client := redis.NewClient(&redis.Options{
+				Addr:     "database:6379",
+				Password: "", // no password set
+				DB:       0,  // use default DB
+			})
+
+			err = client.Set(person.Name, person.Age, 0).Err()
+			onFatalError(err, "Could not save message to database")
 
 			if err := d.Ack(false); err != nil {
 				log.Printf("Error acknowleding: %s", err)
